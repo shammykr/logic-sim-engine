@@ -35,7 +35,9 @@ void usage() {
         "  --quiet            only print the statistics block\n"
         "\n"
         "engine:\n"
-        "  --max-deltas N     delta cycles allowed per time step before giving up (default 10000)\n";
+        "  --max-deltas N     delta cycles allowed per time step before giving up (default 10000)\n"
+        "  --no-dedup         schedule every gate output, even if it doesn't change the net\n"
+        "  --no-pool          allocate events with new/delete instead of the event pool\n";
 }
 
 double peak_rss_mb() {
@@ -79,6 +81,8 @@ int main(int argc, char** argv) {
         else if (a == "--outputs") print_outputs = true;
         else if (a == "--quiet") quiet = true;
         else if (a == "--max-deltas") options.max_deltas = static_cast<std::uint32_t>(std::stoul(value()));
+        else if (a == "--no-dedup") options.dedup = false;
+        else if (a == "--no-pool") options.pool = false;
         else if (a == "-h" || a == "--help") {
             usage();
             return 0;
@@ -156,10 +160,17 @@ int main(int argc, char** argv) {
         std::printf("delta_cycles         %llu (max %u in one step)\n",
                     static_cast<unsigned long long>(s.delta_cycles), s.max_deltas_per_step);
         std::printf("events_scheduled     %llu\n", static_cast<unsigned long long>(s.events_scheduled));
+        std::printf("events_suppressed    %llu (dedup %s)\n", static_cast<unsigned long long>(s.events_suppressed),
+                    options.dedup ? "on" : "off");
         std::printf("events_processed     %llu\n", static_cast<unsigned long long>(s.events_processed));
         std::printf("net_changes          %llu\n", static_cast<unsigned long long>(s.net_changes));
         std::printf("gate_evaluations     %llu\n", static_cast<unsigned long long>(s.gate_evaluations));
         std::printf("ff_updates           %llu\n", static_cast<unsigned long long>(s.ff_updates));
+        if (options.pool) {
+            std::printf("event_pool           %llu events allocated\n", static_cast<unsigned long long>(s.pool_capacity));
+        } else {
+            std::printf("event_pool           off (new/delete)\n");
+        }
         std::printf("events_per_second    %.0f\n", sim_s > 0 ? static_cast<double>(s.events_processed) / sim_s : 0.0);
         if (vcd) {
             std::printf("vcd                  %s (%llu changes, %.1f MB)\n", vcd_file.c_str(),

@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "logicsim/circuit.hpp"
+#include "logicsim/event_pool.hpp"
 
 namespace logicsim {
 
@@ -29,6 +30,9 @@ struct Event {
 
 struct SimOptions {
     std::uint32_t max_deltas = 10000;  // per time step; more means an oscillation
+    bool dedup = true;                 // drop events that would not change the net's final value
+    bool pool = true;                  // allocate events from ObjectPool instead of new/delete
+    std::size_t pool_prealloc = 65536; // events allocated up front when pooling
 };
 
 struct SimStats {
@@ -40,6 +44,8 @@ struct SimStats {
     std::uint64_t net_changes = 0;         // processed events that changed a net
     std::uint64_t gate_evaluations = 0;    // combinational gate evaluations
     std::uint64_t ff_updates = 0;          // flip-flop clock edges / resets acted on
+    std::uint64_t events_suppressed = 0;   // not scheduled: value equals the net's projected value
+    std::uint64_t pool_capacity = 0;       // events allocated by the pool (high-water mark)
 };
 
 // Receives the nets that changed during a time step, once the step has settled.
@@ -73,7 +79,7 @@ public:
     std::uint64_t now() const { return now_; }
     Logic value(NetId n) const { return values_[n]; }
     const std::vector<Logic>& values() const { return values_; }
-    const SimStats& stats() const { return stats_; }
+    const SimStats& stats() const;
 
 private:
     struct Later {
@@ -94,6 +100,8 @@ private:
     ChangeObserver* observer_ = nullptr;
 
     std::vector<Logic> values_;
+    std::vector<Logic> projected_;  // value each net will hold once its pending events are applied
+    ObjectPool<Event> pool_;
     std::priority_queue<Event*, std::vector<Event*>, Later> heap_;
     std::vector<Event*> current_delta_;
     std::vector<Event*> next_delta_;
@@ -108,7 +116,7 @@ private:
     std::uint64_t now_ = 0;
     std::uint64_t seq_ = 0;
     bool initialized_ = false;
-    SimStats stats_;
+    mutable SimStats stats_;
 };
 
 }  // namespace logicsim

@@ -9,6 +9,7 @@ Simulator::Simulator(const Circuit& circuit, SimOptions options)
     : circuit_(circuit),
       options_(options),
       values_(circuit.nets().size(), Logic::X),
+      pool_(options.pool ? options.pool_prealloc : 0),
       dirty_(circuit.gates().size(), 0),
       in_step_changed_(circuit.nets().size(), 0) {
     std::uint32_t max_fanin = 1;
@@ -17,6 +18,12 @@ Simulator::Simulator(const Circuit& circuit, SimOptions options)
     for (NetId n = 0; n < circuit.nets().size(); ++n) {
         if (circuit.nets()[n].is_constant) values_[n] = circuit.nets()[n].constant_value;
     }
+    projected_ = values_;
+}
+
+const SimStats& Simulator::stats() const {
+    stats_.pool_capacity = pool_.capacity();
+    return stats_;
 }
 
 Simulator::~Simulator() {
@@ -29,10 +36,15 @@ Simulator::~Simulator() {
 }
 
 Event* Simulator::new_event(std::uint64_t time, NetId net, Logic value) {
-    return new Event{time, seq_++, net, value};
+    Event* e = options_.pool ? pool_.acquire() : new Event;
+    *e = Event{time, seq_++, net, value};
+    return e;
 }
 
-void Simulator::free_event(Event* e) { delete e; }
+void Simulator::free_event(Event* e) {
+    if (options_.pool) pool_.release(e);
+    else delete e;
+}
 
 // At time 0 every combinational gate is evaluated once, so gates fed only by constants (or
 // flip-flops) produce a value without waiting for an input change.
@@ -55,6 +67,13 @@ void Simulator::set_input(std::uint64_t time, NetId net, Logic value) {
     if (initialized_ && time <= now_ && stats_.time_steps > 0) {
         throw SimulationError("input change at time " + std::to_string(time) + " is in the past");
     }
+    if (options_.dedup) {
+        if (projected_[net] == value) {
+            ++stats_.events_suppressed;
+            return;
+        }
+        projected_[net] = value;
+    }
     heap_.push(new_event(time, net, value));
     ++stats_.events_scheduled;
 }
@@ -67,7 +86,18 @@ void Simulator::run_until(std::uint64_t until) {
     while (!heap_.empty() && heap_.top()->time <= until) process_time_step(heap_.top()->time);
 }
 
+// Event deduplication: every net has a single driver with a fixed delay, so its events are
+// applied in the order they were scheduled. An event whose value equals the value the net will
+// already have after its pending events (projected_) can never change anything: drop it. This
+// stops a re-evaluated gate whose output didn't change from generating any downstream work.
 void Simulator::schedule(NetId net, Logic value, std::uint32_t delay) {
+    if (options_.dedup) {
+        if (projected_[net] == value) {
+            ++stats_.events_suppressed;
+            return;
+        }
+        projected_[net] = value;
+    }
     Event* e = new_event(now_ + delay, net, value);
     ++stats_.events_scheduled;
     if (delay == 0) next_delta_.push_back(e);
