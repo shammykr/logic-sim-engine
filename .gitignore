@@ -1,0 +1,6 @@
+build/
+*.vcd
+benchmarks/generated/
+benchmarks/results/
+__pycache__/
+.DS_Store
