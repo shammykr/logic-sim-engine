@@ -24,11 +24,11 @@ class Lexer {
 public:
     Lexer(const std::string& src, std::string file) : src_(src), file_(std::move(file)) {}
 
-    std::vector<Token> run() {
-        std::vector<Token> out;
-        while (true) {
+    // Produces the next token; streaming keeps memory flat for large netlists.
+    Token next() {
+        {
             skip_space_and_comments();
-            if (pos_ >= src_.size()) break;
+            if (pos_ >= src_.size()) return {Tok::End, "<end of file>", line_};
             char c = src_[pos_];
             if (std::isalpha(static_cast<unsigned char>(c)) || c == '_') {
                 std::size_t start = pos_;
@@ -36,31 +36,27 @@ public:
                                               src_[pos_] == '_' || src_[pos_] == '$')) {
                     ++pos_;
                 }
-                out.push_back({Tok::Ident, src_.substr(start, pos_ - start), line_});
+                return {Tok::Ident, src_.substr(start, pos_ - start), line_};
             } else if (c == '\\') {  // escaped identifier: up to the next whitespace
                 std::size_t start = ++pos_;
                 while (pos_ < src_.size() && !std::isspace(static_cast<unsigned char>(src_[pos_]))) ++pos_;
                 if (pos_ == start) fail("empty escaped identifier");
-                out.push_back({Tok::Ident, src_.substr(start, pos_ - start), line_});
+                return {Tok::Ident, src_.substr(start, pos_ - start), line_};
             } else if (std::isdigit(static_cast<unsigned char>(c))) {
                 std::size_t start = pos_;
                 while (pos_ < src_.size() && std::isdigit(static_cast<unsigned char>(src_[pos_]))) ++pos_;
                 if (pos_ < src_.size() && src_[pos_] == '\'') {  // sized constant such as 1'b0
                     ++pos_;
                     while (pos_ < src_.size() && std::isalnum(static_cast<unsigned char>(src_[pos_]))) ++pos_;
-                    out.push_back({Tok::Constant, src_.substr(start, pos_ - start), line_});
-                } else {
-                    out.push_back({Tok::Number, src_.substr(start, pos_ - start), line_});
+                    return {Tok::Constant, src_.substr(start, pos_ - start), line_};
                 }
+                return {Tok::Number, src_.substr(start, pos_ - start), line_};
             } else if (std::string("()[],;:#.=").find(c) != std::string::npos) {
-                out.push_back({Tok::Symbol, std::string(1, c), line_});
                 ++pos_;
-            } else {
-                fail(std::string("unexpected character '") + c + "'");
+                return {Tok::Symbol, std::string(1, c), line_};
             }
+            fail(std::string("unexpected character '") + c + "'");
         }
-        out.push_back({Tok::End, "<end of file>", line_});
-        return out;
     }
 
 private:
@@ -116,7 +112,10 @@ std::string upper(std::string s) {
 
 class Parser {
 public:
-    Parser(std::vector<Token> tokens, std::string file) : toks_(std::move(tokens)), file_(std::move(file)) {}
+    Parser(Lexer& lexer, std::string file) : lexer_(lexer), file_(std::move(file)) {
+        look_[0] = lexer_.next();
+        look_[1] = lexer_.next();
+    }
 
     Circuit run() {
         expect_word("module");
@@ -147,8 +146,15 @@ public:
 
 private:
     // --- token helpers ----------------------------------------------------------------------
-    const Token& peek() const { return toks_[pos_]; }
-    const Token& next() { return toks_[pos_ < toks_.size() - 1 ? pos_++ : pos_]; }
+    // Two tokens of lookahead: look_[0] is the current token.
+    const Token& peek() const { return look_[0]; }
+    const Token& peek2() const { return look_[1]; }
+    Token next() {
+        Token t = std::move(look_[0]);
+        look_[0] = std::move(look_[1]);
+        look_[1] = look_[0].kind == Tok::End ? look_[0] : lexer_.next();
+        return t;
+    }
     bool peek_symbol(const char* s) const { return peek().kind == Tok::Symbol && peek().text == s; }
     bool peek_word(const char* s) const { return peek().kind == Tok::Ident && peek().text == s; }
     bool accept(const char* s) {
@@ -221,8 +227,8 @@ private:
             port_order_.push_back(name);
             declare_direction(dir, name, range);
             // Further names share the direction until the next direction keyword.
-            while (peek_symbol(",") && toks_[pos_ + 1].kind == Tok::Ident &&
-                   toks_[pos_ + 1].text != "input" && toks_[pos_ + 1].text != "output") {
+            while (peek_symbol(",") && peek2().kind == Tok::Ident && peek2().text != "input" &&
+                   peek2().text != "output") {
                 next();
                 std::string more = expect_ident("port name");
                 port_order_.push_back(more);
@@ -366,9 +372,9 @@ private:
         circuit_.add_gate(GateType::Dff, name, q, ins, delay);
     }
 
-    std::vector<Token> toks_;
+    Lexer& lexer_;
     std::string file_;
-    std::size_t pos_ = 0;
+    Token look_[2];
     Circuit circuit_;
     std::vector<std::string> port_order_;
     std::map<std::string, std::string> directions_;
@@ -381,7 +387,7 @@ private:
 
 Circuit parse_verilog(const std::string& source, const std::string& filename) {
     Lexer lexer(source, filename);
-    Parser parser(lexer.run(), filename);
+    Parser parser(lexer, filename);
     return parser.run();
 }
 
