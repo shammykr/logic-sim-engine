@@ -13,6 +13,8 @@ add_library(logicsim_core
   src/circuit.cpp
   src/verilog_parser.cpp
   src/simulator.cpp
+  src/vcd_writer.cpp
+  src/stimulus.cpp
 )
 target_include_directories(logicsim_core PUBLIC include)
 target_compile_options(logicsim_core PRIVATE

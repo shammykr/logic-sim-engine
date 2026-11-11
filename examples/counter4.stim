@@ -1,0 +1,7 @@
+# Reset for the first cycle, count for 18 clock edges, pause (en=0) for 3, then count again.
+clock clk 20
+end 500
+0   rst=1 en=0
+13  rst=0 en=1
+373 en=0
+433 en=1

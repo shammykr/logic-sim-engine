@@ -1,0 +1,10 @@
+# Walk the full adder through all 8 input combinations, one every 10 time units.
+end 80
+0  a=0 b=0 cin=0
+10 a=0 b=0 cin=1
+20 a=0 b=1 cin=0
+30 a=0 b=1 cin=1
+40 a=1 b=0 cin=0
+50 a=1 b=0 cin=1
+60 a=1 b=1 cin=0
+70 a=1 b=1 cin=1
